@@ -1,0 +1,244 @@
+---
+title: "colf"
+author: "Theo Boutaris"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{colf tutorial}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## colf
+
+This is a package dedicated to performing a least squares constrained optimization on a 
+linear objective function. The functions minimize the same objective function as `lm`, applying a
+constraint on the beta parameters:
+
+$$S(\beta) = \sum_{i=1}^m \vert y_i - \sum_{j=1}^nX_{ij}\beta_j \vert^2 = \Vert y - X\beta\Vert^2$$
+
+And 
+
+$$\hat{\beta} = arg_\beta min \ S(\beta)$$
+under the constraints:
+
+$$lower \le \hat{\beta} \le upper $$
+
+The idea behind the package is to give the users a way to perform a constrained "linear regression"
+in an easy and intuitive way. The functions require a formula in the same syntax and format as `lm` 
+which is a style most R users are familiar with.
+
+So far the package includes two functions in order to perform the constrained optimization:
+  
+* `colf_nls` - uses the port algorithm which comes from the `stats::nls` function.
+* `colf_nlxb` - uses Nash's variant of Marquardt nonlinear least squares solution which comes from 
+  the `nlmrt::nlxb` function.
+
+You can find more details about the two algorithms if you have a look at `?nls` and `?nlxb` 
+respectively.
+
+## colf_nls
+
+Now we will see how we can easily use the port algorithm to perform a constrained optimization. As you
+will see we are using `colf_nls` in the same way we would use `lm` with the addition of upper and 
+lower bounds for our parameter estimates.
+
+We will use the `mtcars` data set for a demonstration. Let's load the package and use `mtcars` to 
+run a constrained least squares optimization model.
+
+In the model below we use 4 variables to model mpg which means we will have 5 parameter 
+estimates (don't forget the Intercept). Parameters are prefixed with `param_` in the model's output. 
+We set the lower bounds of those 4 parameter estimates to -2 and the upper bounds to 2 
+(obviously they do not need to be the same). Ideally, starting values should be provided. If omitted 
+a cheap guess will be made, which is basically setting all starting values to 1. If the staring values
+do not fall within the boundaries defined by lower and upper then an error will be returned and you 
+would need to manually change the starting values via the `start` argument.
+
+#### Usage
+
+```{R}
+library(colf)
+mymod <- colf_nls(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-2, 5), upper = rep(2, 5))
+mymod
+```
+
+As you can see all 5 parameter estimates fall within the defined boundaries. The above provided 
+formula includes the Intercept. In the output, X.Intercept is a variable set to 1 and 
+param_X.Intercept is the estimated intercept. 
+
+If starting values do not fall within the boundaries an error will be returned. As said previously
+if not provided they will be set to 1.
+
+```{R, error = TRUE}
+colf_nls(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-2, 5), upper = rep(0.5, 5))
+```
+
+So, then they need to be set by the user:
+
+```{R}
+colf_nls(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-2, 5), upper = rep(0.5, 5), 
+         start = rep(0, 5))
+```
+
+#### Alternative ways to define the formula
+
+As with `lm`, `colf_nls` accepts the same kind of formula syntax:
+
+```{R}
+#no intercept
+colf_nls(mpg ~ 0 + hp + cyl, mtcars)
+
+colf_nls(mpg ~ ., mtcars)
+
+colf_nls(mpg ~ I(hp + cyl), mtcars)
+
+colf_nls(mpg ~ (hp + cyl + disp)^3, mtcars)
+
+colf_nls(mpg ~ hp:cyl, mtcars)
+
+colf_nls(mpg ~ hp * cyl, mtcars)
+```
+
+Notice that when the above versions are used, the parameter names are created with the use of 
+`make.names` in order to be syntactically valid (otherwise the optimizers fail). This is why you 
+see an 'X.' in front of the intercept or too many dots in the names.
+
+#### Predict and rest of Methods
+
+`colf` provides a number of methods for `colf` objects:
+
+* `predict` - uses parameter estimates to predict on a new data set
+* `coef` - retrieve the coefficients
+* `resid` - retrieve the residuals
+* `print` - print the model
+* `summary` - view a summary of the model
+* `fitted` - retrieve the fitted values
+
+In order to use the parameter estimates to make predictions on a new data set you need to 
+remember two **really important** checks:
+
+* The new data set needs to contain exactly the same column names as the original one
+* The new data set's columns should have exactly the same column classes
+
+If any of the two is not valid, `predict` will fail.
+
+```{R}
+set.seed(10)
+newdata <- data.frame(hp = mtcars$hp, cyl = mtcars$cyl, disp = mtcars$disp, qsec = mtcars$qsec)
+predict(mymod, newdata)
+```
+
+But if I change any of the names or classes `predict` will fail
+
+```{R, error = TRUE}
+#change column name
+newdata2 <- newdata
+names(newdata2)[1] <- 'col1'
+predict(mymod, newdata2)
+
+#change column class
+newdata2 <- newdata
+newdata2$cyl <- as.character(newdata2$cyl)  
+predict(mymod, newdata2)
+```
+
+The rest of the `colf_nls` methods are demonstrated below:
+
+You need to be careful when using `summary` because it returns p-values. By default `nls` and 
+`nlxb` both return p-values for the coefficients, which were naturally passed on to colf. When
+running an unconstrained regression the p-values show us how likely it is for the estimate to be 
+zero. In constrained regression though this may not even hold if you think that a restriction (and
+actually a common one) is to force the coefficients to be positive. In such a case the hypothesis
+test does not hold at all since we have restricted the coefficients to be positive. In constrained
+regression other assumptions that we make in unconstrained regression do not hold either (like 
+the coefficients' distribution) so the use and interpretation of the p-values can be problematic
+when we set lower and/or upper.
+
+```{R}
+summary(mymod)
+```
+
+```{R}
+coef(mymod)
+print(mymod)
+resid(mymod)
+fitted(mymod)
+```
+
+## colf_nlxb
+
+`colf_nlxb` can be used in the exact same way as `colf_nls`. All aspects / features discussed about
+`colf_nls` do stand for `colf_nlxb` as well. Only the underlying algorithm changes.
+
+#### Usage
+
+```{R}
+mymod <- colf_nlxb(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-2, 5), upper = rep(2, 5))
+mymod
+```
+
+Setting lower, upper and starting values:
+
+```{R, error = TRUE}
+#start values are outside boundaries
+colf_nlxb(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-2, 5), upper = rep(0.5, 5))
+```
+
+```{R}
+#so they need to be provided
+colf_nlxb(mpg ~ cyl + disp + hp + qsec, mtcars, lower = rep(-5, 5), upper = rep(.5, 5), 
+         start = rep(0, 5))
+```
+
+#### Alternative ways to use formula, similar to `lm`:
+
+```{R}
+#no intercept
+colf_nlxb(mpg ~ 0 + hp + cyl, mtcars)
+colf_nlxb(mpg ~ ., mtcars)
+colf_nlxb(mpg ~ I(hp + cyl), mtcars)
+colf_nlxb(mpg ~ (hp + cyl + disp)^3, mtcars)
+colf_nlxb(mpg ~ hp:cyl, mtcars)
+colf_nlxb(mpg ~ hp * cyl, mtcars)
+```
+
+#### Predict and rest of the methods
+
+```{R}
+set.seed(10)
+newdata <- data.frame(hp = mtcars$hp, cyl = mtcars$cyl, disp = mtcars$disp, qsec = mtcars$qsec)
+predict(mymod, newdata)
+```
+
+As with `colf_nls`, in `colf_nlxb` keeping names and classes the same is vital:
+
+```{R, error = TRUE}
+#change column name
+newdata2 <- newdata
+names(newdata2)[1] <- 'col1'
+predict(mymod, newdata2)
+
+#change column class
+newdata2 <- newdata
+newdata2$cyl <- as.character(newdata2$cyl)  
+predict(mymod, newdata2)
+```
+
+Rest of methods provided:
+
+Please make sure you read the section about the interpretation of the p-values at `colf_nls` when
+running a constrained regression. The same principles described there hold for `colf_nlxb`. 
+
+```{R}
+summary(mymod)
+```
+
+```{R}
+coef(mymod)
+print(mymod)
+resid(mymod)
+fitted(mymod)
+```
+
+
+
